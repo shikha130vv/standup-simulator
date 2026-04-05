@@ -160,6 +160,35 @@ body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--tex
 .share-btn.close { background: transparent; border: 1px solid var(--border); color: var(--text2); }
 .copied-msg { color: var(--green); font-size: 12px; margin-top: 8px; }
 
+/* Daily challenge */
+.daily-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; background: linear-gradient(135deg, rgba(251,191,36,0.15), rgba(248,113,113,0.15)); border: 1px solid rgba(251,191,36,0.3); color: var(--yellow); margin-bottom: 14px; letter-spacing: 0.3px; }
+.daily-badge .daily-num { font-size: 14px; font-weight: 900; }
+.mode-tabs { display: flex; gap: 0; margin-bottom: 18px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
+.mode-tab { flex: 1; padding: 10px 8px; border: none; background: transparent; color: var(--text2); font-size: 13px; font-weight: 600; cursor: pointer; font-family: 'Inter', sans-serif; transition: all 0.15s; }
+.mode-tab + .mode-tab { border-left: 1px solid var(--border); }
+.mode-tab.active { background: rgba(74,158,255,0.12); color: var(--blue); }
+.mode-tab:hover:not(.active) { background: rgba(255,255,255,0.03); }
+.daily-played { text-align: center; padding: 20px; }
+.daily-played-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+.daily-played-sub { font-size: 13px; color: var(--text2); }
+.daily-played-score { font-size: 36px; font-weight: 900; background: linear-gradient(135deg, var(--yellow), var(--orange)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 8px 0; }
+
+/* Emoji grid */
+.emoji-grid { display: flex; flex-wrap: wrap; gap: 3px; justify-content: center; margin: 10px 0; }
+.emoji-cell { width: 28px; height: 28px; border-radius: 5px; display: flex; align-items: center; justify-content: center; font-size: 13px; }
+.emoji-cell.correct { background: rgba(52,211,153,0.2); }
+.emoji-cell.wrong { background: rgba(248,113,113,0.2); }
+.emoji-cell.timeout { background: rgba(107,114,128,0.2); }
+
+/* Score card canvas */
+.scorecard-wrap { margin: 12px 0; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); }
+.scorecard-wrap canvas { width: 100%; display: block; }
+.scorecard-actions { display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
+
+/* Streak calendar */
+.streak-info { display: flex; align-items: center; gap: 8px; justify-content: center; margin: 8px 0; font-size: 12px; color: var(--text2); }
+.streak-fire { font-size: 16px; }
+
 @media (max-width: 520px) {
   .game-container { padding: 10px; } .start-title { font-size: 32px; } .blocker-text { font-size: 13px; }
   .action-btn { padding: 11px 4px; font-size: 12px; } .kb-hints { display: none; }
@@ -334,8 +363,142 @@ const SLACK_REACTIONS = {
   ],
 };
 
+// ── Daily Challenge System ──
+function getDailyNumber() {
+  const epoch = new Date("2026-04-01").getTime();
+  return Math.floor((Date.now() - epoch) / 86400000) + 1;
+}
+
+function seededRandom(seed) {
+  let s = seed;
+  return function() { s = (s * 16807 + 0) % 2147483647; return s / 2147483647; };
+}
+
+function getDailyBlockers() {
+  const dayNum = getDailyNumber();
+  const rng = seededRandom(dayNum * 7919); // prime seed
+  const count = 10;
+  const pool = [...BLOCKERS];
+  const selected = [];
+  for (let i = 0; i < count && pool.length > 0; i++) {
+    const idx = Math.floor(rng() * pool.length);
+    selected.push(pool.splice(idx, 1)[0]);
+  }
+  return selected;
+}
+
+function getDailyState() {
+  const key = `standup_daily_${getDailyNumber()}`;
+  try { return JSON.parse(localStorage.getItem(key)); } catch(e) { return null; }
+}
+
+function saveDailyState(result) {
+  const key = `standup_daily_${getDailyNumber()}`;
+  localStorage.setItem(key, JSON.stringify(result));
+}
+
+function getDailyStreak() {
+  let streak = 0;
+  let day = getDailyNumber();
+  while (day > 0) {
+    const key = `standup_daily_${day}`;
+    try { if (JSON.parse(localStorage.getItem(key))) streak++; else break; } catch(e) { break; }
+    day--;
+  }
+  return streak;
+}
+
+// ── Visual Score Card (Canvas) ──
+function generateScoreCard() {
+  const rank = [...RANKS].reverse().find(r => S.score >= r.min) || RANKS[0];
+  const c = document.createElement("canvas");
+  c.width = 600; c.height = 400;
+  const ctx = c.getContext("2d");
+
+  // Background
+  const bg = ctx.createLinearGradient(0, 0, 600, 400);
+  bg.addColorStop(0, "#0a0e17"); bg.addColorStop(1, "#131a2b");
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, 600, 400);
+
+  // Border glow
+  ctx.strokeStyle = "rgba(74,158,255,0.3)"; ctx.lineWidth = 2;
+  ctx.roundRect(8, 8, 584, 384, 16); ctx.stroke();
+
+  // Title
+  ctx.font = "bold 24px Inter, sans-serif"; ctx.fillStyle = "#e8edf5";
+  ctx.textAlign = "center"; ctx.fillText("The Standup Simulator", 300, 48);
+
+  // Rank emoji + title
+  ctx.font = "44px serif"; ctx.fillText(rank.e, 300, 100);
+  ctx.font = "bold 20px Inter, sans-serif"; ctx.fillStyle = "#7a8ba8";
+  ctx.fillText(rank.t, 300, 128);
+
+  // Score
+  const scoreGrad = ctx.createLinearGradient(200, 140, 400, 180);
+  scoreGrad.addColorStop(0, "#4a9eff"); scoreGrad.addColorStop(1, "#34d399");
+  ctx.font = "900 64px Inter, sans-serif"; ctx.fillStyle = scoreGrad;
+  ctx.fillText(S.score, 300, 196);
+
+  // Stats boxes
+  const stats = [
+    { label: "MORALE", value: S.morale + "%", color: S.morale > 60 ? "#34d399" : S.morale > 30 ? "#fbbf24" : "#f87171" },
+    { label: "SPRINT", value: S.sprint + "%", color: S.sprint > 60 ? "#4a9eff" : S.sprint > 30 ? "#fbbf24" : "#f87171" },
+    { label: "STREAK", value: S.bestStreak + "x", color: "#8b5cf6" },
+  ];
+  stats.forEach((s, i) => {
+    const x = 120 + i * 180;
+    ctx.fillStyle = "rgba(255,255,255,0.04)"; ctx.beginPath(); ctx.roundRect(x - 60, 220, 120, 55, 8); ctx.fill();
+    ctx.font = "bold 22px Inter, sans-serif"; ctx.fillStyle = s.color; ctx.fillText(s.value, x, 248);
+    ctx.font = "bold 9px Inter, sans-serif"; ctx.fillStyle = "#4a5a75"; ctx.fillText(s.label, x, 266);
+  });
+
+  // Emoji decision grid
+  const decisions = S.decisions || [];
+  if (decisions.length > 0) {
+    ctx.font = "bold 10px Inter, sans-serif"; ctx.fillStyle = "#4a5a75";
+    ctx.fillText("DECISIONS", 300, 298);
+    const gridW = decisions.length * 26;
+    const startX = 300 - gridW / 2;
+    decisions.forEach((d, i) => {
+      const x = startX + i * 26;
+      ctx.fillStyle = d === "correct" ? "rgba(52,211,153,0.25)" : d === "wrong" ? "rgba(248,113,113,0.25)" : "rgba(107,114,128,0.25)";
+      ctx.beginPath(); ctx.roundRect(x, 304, 22, 22, 4); ctx.fill();
+      ctx.font = "13px serif";
+      ctx.fillStyle = "#e8edf5";
+      ctx.fillText(d === "correct" ? "\u2713" : d === "wrong" ? "\u2717" : "\u2022", x + 11, 320);
+    });
+  }
+
+  // Daily badge or mode
+  ctx.font = "bold 11px Inter, sans-serif"; ctx.fillStyle = "#4a5a75";
+  const modeText = S.isDaily ? `DAILY #${getDailyNumber()}` : `${S.difficulty.toUpperCase()} MODE`;
+  ctx.fillText(modeText, 300, 355);
+
+  // URL
+  ctx.font = "11px Inter, sans-serif"; ctx.fillStyle = "#4a5a75";
+  ctx.fillText("shikha130vv.github.io/standup-simulator", 300, 378);
+
+  return c;
+}
+
+async function shareScoreCard() {
+  const canvas = generateScoreCard();
+  try {
+    const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
+    if (navigator.share && navigator.canShare?.({files:[new File([blob],"score.png",{type:"image/png"})]})) {
+      await navigator.share({ files: [new File([blob], "standup-score.png", {type:"image/png"})],
+        title: "The Standup Simulator", text: "Can you survive daily standup?" });
+      return;
+    }
+  } catch(e) {}
+  // Fallback: download
+  const url = canvas.toDataURL("image/png");
+  const a = document.createElement("a"); a.href = url; a.download = "standup-score.png"; a.click();
+  toast("Score card downloaded!", "good");
+}
+
 // ── State ──
-let S = { screen:"start", difficulty:"normal" };
+let S = { screen:"start", difficulty:"normal", mode:"daily" };
 const app = document.getElementById("app");
 
 function toast(msg,type){const t=document.createElement("div");t.className=`toast ${type}`;t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),2200)}
@@ -364,29 +527,80 @@ function render() {
 }
 
 function renderStart() {
+  const dailyPlayed = getDailyState();
+  const dailyNum = getDailyNumber();
+  const streak = getDailyStreak();
+
   app.innerHTML = `<div class="start-screen">
     <div class="start-title">The Standup<br>Simulator</div>
     <div class="start-sub">Can you survive daily standup?</div>
-    <div class="difficulty">
-      <button class="diff-btn ${S.difficulty==="easy"?"active":""}" onclick="S.difficulty='easy';render()">Easy</button>
-      <button class="diff-btn ${S.difficulty==="normal"?"active":""}" onclick="S.difficulty='normal';render()">Normal</button>
-      <button class="diff-btn ${S.difficulty==="hard"?"active":""}" onclick="S.difficulty='hard';render()">Hard</button>
+
+    <div class="mode-tabs">
+      <button class="mode-tab ${S.mode==="daily"?"active":""}" onclick="S.mode='daily';render()">Daily Challenge</button>
+      <button class="mode-tab ${S.mode==="practice"?"active":""}" onclick="S.mode='practice';render()">Practice</button>
     </div>
-    <div class="rules-card"><h3>How to play</h3>
-      <div class="rule-item"><div class="rule-dot green"></div><strong>Resolve</strong> — Handle it &nbsp;<span class="kb-key">1</span></div>
-      <div class="rule-item"><div class="rule-dot yellow"></div><strong>Escalate</strong> — Pass up &nbsp;<span class="kb-key">2</span></div>
-      <div class="rule-item"><div class="rule-dot red"></div><strong>Ignore</strong> — Skip it &nbsp;<span class="kb-key">3</span></div>
-    </div>
-    <button class="play-btn" onclick="startGame()">Start Standup</button>
+
+    ${S.mode === "daily" ? `
+      <div class="daily-badge"><span class="daily-num">#${dailyNum}</span> Today's Standup</div>
+      ${streak > 1 ? `<div class="streak-info"><span class="streak-fire">\ud83d\udd25</span> ${streak}-day streak!</div>` : ""}
+      ${dailyPlayed ? `
+        <div class="daily-played">
+          <div class="daily-played-title">You already survived today's standup!</div>
+          <div class="daily-played-score">${dailyPlayed.score}</div>
+          <div class="daily-played-sub">${dailyPlayed.rank} \u2014 Come back tomorrow for a new one.</div>
+          <div class="emoji-grid">${(dailyPlayed.decisions||[]).map(d =>
+            `<div class="emoji-cell ${d}">${d==="correct"?"\u2705":d==="wrong"?"\u274c":"\u2b1c"}</div>`
+          ).join("")}</div>
+          <button class="play-btn" style="margin-top:16px;background:linear-gradient(135deg,var(--green),#06b6d4)" onclick="shareDaily()">Share Result</button>
+        </div>
+      ` : `
+        <div class="rules-card"><h3>Same blockers for everyone today</h3>
+          <div class="rule-item"><div class="rule-dot green"></div>10 rounds, one attempt</div>
+          <div class="rule-item"><div class="rule-dot yellow"></div>Compare scores with friends</div>
+          <div class="rule-item"><div class="rule-dot red"></div>Play daily to build your streak</div>
+        </div>
+        <button class="play-btn" onclick="startDailyGame()">Start Daily #${dailyNum}</button>
+      `}
+    ` : `
+      <div class="difficulty">
+        <button class="diff-btn ${S.difficulty==="easy"?"active":""}" onclick="S.difficulty='easy';render()">Easy</button>
+        <button class="diff-btn ${S.difficulty==="normal"?"active":""}" onclick="S.difficulty='normal';render()">Normal</button>
+        <button class="diff-btn ${S.difficulty==="hard"?"active":""}" onclick="S.difficulty='hard';render()">Hard</button>
+      </div>
+      <div class="rules-card"><h3>How to play</h3>
+        <div class="rule-item"><div class="rule-dot green"></div><strong>Resolve</strong> — Handle it &nbsp;<span class="kb-key">1</span></div>
+        <div class="rule-item"><div class="rule-dot yellow"></div><strong>Escalate</strong> — Pass up &nbsp;<span class="kb-key">2</span></div>
+        <div class="rule-item"><div class="rule-dot red"></div><strong>Ignore</strong> — Skip it &nbsp;<span class="kb-key">3</span></div>
+      </div>
+      <button class="play-btn" onclick="startGame()">Start Standup</button>
+    `}
   </div>`;
 }
 
 function startGame() {
   const cfg = DIFFS[S.difficulty];
-  S = {...S, screen:"play", score:0, round:0, maxRounds:cfg.rounds, morale:100, sprint:100,
+  S = {...S, screen:"play", isDaily:false, score:0, round:0, maxRounds:cfg.rounds, morale:100, sprint:100,
     timeLeft:cfg.timer, maxTime:cfg.timer, streak:0, bestStreak:0, timer:null, used:new Set(),
-    blocker:null, person:null, narrative:pick(NARRATIVES.start), slackHistory:[], internCount:0, ceoCount:0};
+    blocker:null, person:null, narrative:pick(NARRATIVES.start), slackHistory:[], internCount:0, ceoCount:0,
+    decisions:[], dailyBlockers:null};
   nextRound();
+}
+
+function startDailyGame() {
+  S = {...S, screen:"play", isDaily:true, difficulty:"normal", score:0, round:0, maxRounds:10, morale:100, sprint:100,
+    timeLeft:100, maxTime:100, streak:0, bestStreak:0, timer:null, used:new Set(),
+    blocker:null, person:null, narrative:pick(NARRATIVES.start), slackHistory:[], internCount:0, ceoCount:0,
+    decisions:[], dailyBlockers:getDailyBlockers(), dailyIdx:0};
+  nextRound();
+}
+
+function shareDaily() {
+  const ds = getDailyState();
+  if (!ds) return;
+  const rank = [...RANKS].reverse().find(r => ds.score >= r.min) || RANKS[0];
+  const grid = (ds.decisions||[]).map(d => d==="correct"?"\u2705":d==="wrong"?"\u274c":"\u2b1c").join("");
+  const text = `The Standup Simulator \u2014 Daily #${getDailyNumber()}\n\n${rank.e} ${ds.score} pts \u2014 ${rank.t}\n${grid}\n\nCan you beat my score?\nhttps://shikha130vv.github.io/standup-simulator/\n\n#StandupSimulator #DailyChallenge`;
+  navigator.clipboard.writeText(text).then(() => toast("Copied! Share it!", "good")).catch(() => {});
 }
 
 function getTier() {
@@ -401,14 +615,18 @@ function nextRound() {
   if (S.round >= S.maxRounds || S.morale <= 0 || S.sprint <= 0) { endGame(); return; }
   S.round++;
   S.timeLeft = S.maxTime;
-  const tier = getTier();
-
-  // Pick blocker from current tier (or lower)
-  const avail = BLOCKERS.filter((b,i) => b.t <= tier && !S.used.has(i));
-  if (!avail.length) S.used.clear();
-  const pool = avail.length ? avail : BLOCKERS.filter(b => b.t <= tier);
-  const b = pick(pool);
-  S.used.add(BLOCKERS.indexOf(b));
+  let b;
+  if (S.isDaily && S.dailyBlockers) {
+    // Daily mode: use pre-seeded sequence
+    b = S.dailyBlockers[S.round - 1] || pick(BLOCKERS);
+  } else {
+    const tier = getTier();
+    const avail = BLOCKERS.filter((bl,i) => bl.t <= tier && !S.used.has(i));
+    if (!avail.length) S.used.clear();
+    const pool = avail.length ? avail : BLOCKERS.filter(bl => bl.t <= tier);
+    b = pick(pool);
+    S.used.add(BLOCKERS.indexOf(b));
+  }
   S.blocker = b;
 
   // Pick person — use specified person or random
@@ -537,13 +755,24 @@ function processResult(isCorrect, msg, action) {
     setTimeout(()=>app.classList.remove("shake"),400);
   }
 
+  // Track decision for emoji grid
+  if (S.decisions) S.decisions.push(isCorrect ? "correct" : "wrong");
+
   if (card) card.classList.add("card-exit");
-  setTimeout(nextRound, isCorrect ? 500 : 1200); // longer pause on wrong to see consequence
+  setTimeout(nextRound, isCorrect ? 500 : 1200);
 }
 
 function endGame() {
   S.screen="over"; clearInterval(S.timer);
   const el=document.getElementById("combo"); if(el){el.className="combo-popup";el.textContent="";}
+
+  // Save daily result
+  if (S.isDaily) {
+    const rank = [...RANKS].reverse().find(r => S.score >= r.min) || RANKS[0];
+    saveDailyState({ score: S.score, rank: rank.t, morale: S.morale, sprint: S.sprint,
+      bestStreak: S.bestStreak, decisions: S.decisions, difficulty: S.difficulty });
+  }
+
   if (S.score>=350) SFX.victory(); else SFX.gameOver();
   render();
 }
@@ -578,17 +807,39 @@ function renderOver() {
       <div class="go-headline">${headlines.h}</div>
       <div class="go-byline">${headlines.b}</div>
     </div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
-      <button class="play-btn" onclick="S.screen='start';render()">Play Again</button>
-      <button class="play-btn" style="background:linear-gradient(135deg,var(--green),#06b6d4)" onclick="shareScore()">Share Score</button>
+    ${S.decisions && S.decisions.length > 0 ? `
+      <div style="margin:8px 0">
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Decisions</div>
+        <div class="emoji-grid">${S.decisions.map(d =>
+          `<div class="emoji-cell ${d}">${d==="correct"?"\u2705":d==="wrong"?"\u274c":"\u2b1c"}</div>`
+        ).join("")}</div>
+      </div>
+    ` : ""}
+    ${S.isDaily ? `<div class="streak-info"><span class="streak-fire">\ud83d\udd25</span> ${getDailyStreak()}-day streak</div>` : ""}
+    <div class="scorecard-wrap"><canvas id="scoreCanvas"></canvas></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:8px">
+      <button class="play-btn" onclick="S.mode='${S.isDaily?"daily":"practice"}';S.screen='start';render()">${S.isDaily?"Back":"Play Again"}</button>
+      <button class="play-btn" style="background:linear-gradient(135deg,var(--green),#06b6d4)" onclick="shareScoreCard()">Save Score Card</button>
+      <button class="play-btn" style="background:linear-gradient(135deg,var(--yellow),var(--orange))" onclick="shareScore()">Copy for LinkedIn</button>
     </div>
   </div>`;
+  // Render score card canvas
+  setTimeout(() => {
+    const target = document.getElementById("scoreCanvas");
+    if (target) {
+      const card = generateScoreCard();
+      target.width = card.width; target.height = card.height;
+      target.getContext("2d").drawImage(card, 0, 0);
+    }
+  }, 100);
 }
 
 function shareScore() {
   const rank=[...RANKS].reverse().find(r=>S.score>=r.min)||RANKS[0];
-  const bars=v=>{const f=Math.round(v/10);return"\u2588".repeat(f)+"\u2591".repeat(10-f)};
-  const text=`${rank.e} The Standup Simulator ${rank.e}\n\nScore: ${S.score} \u2014 ${rank.t}\nMorale: ${bars(S.morale)} ${S.morale}%\nSprint: ${bars(S.sprint)} ${S.sprint}%\nStreak: ${S.bestStreak}x | Mode: ${S.difficulty}\n\nCan you survive daily standup? \ud83d\ude02\nhttps://shikha130vv.github.io/standup-simulator/\n\n#TheStandupSimulator #AgileHumor #ScrumLife`;
+  const grid = (S.decisions||[]).map(d => d==="correct"?"\u2705":d==="wrong"?"\u274c":"\u2b1c").join("");
+  const dailyTag = S.isDaily ? `Daily #${getDailyNumber()} \u2014 ` : "";
+  const streakTag = S.isDaily && getDailyStreak() > 1 ? `\n\ud83d\udd25 ${getDailyStreak()}-day streak` : "";
+  const text=`${rank.e} The Standup Simulator ${rank.e}\n\n${dailyTag}Score: ${S.score} \u2014 ${rank.t}\n${grid}\nMorale: ${S.morale}% | Sprint: ${S.sprint}% | Streak: ${S.bestStreak}x${streakTag}\n\nCan you survive daily standup?\nhttps://shikha130vv.github.io/standup-simulator/\n\n#StandupSimulator #AgileHumor #ScrumLife`;
   const o=document.createElement("div");o.className="share-overlay";o.onclick=e=>{if(e.target===o)o.remove()};
   o.innerHTML=`<div class="share-card"><h3>Share Your Score</h3><div class="share-text" id="shareText">${text}</div><div class="share-btns"><button class="share-btn copy" onclick="copyShare()">Copy to Clipboard</button><button class="share-btn close" onclick="this.closest('.share-overlay').remove()">Close</button></div><div class="copied-msg" id="copiedMsg" style="display:none">Copied! Paste it on LinkedIn \ud83d\ude80</div></div>`;
   document.body.appendChild(o);
